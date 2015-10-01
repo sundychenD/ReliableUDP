@@ -1,7 +1,5 @@
 import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.SocketException;
+import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
 
@@ -28,11 +26,12 @@ public class FileReceiver {
             DatagramSocket sk = new DatagramSocket(port);
             DatagramPacket pkt = new DatagramPacket(data, data.length);
 
+            int receivedPacket = 0;
             while (true) {
                 pkt.setLength(data.length);
                 sk.receive(pkt);
                 if (pkt.getLength() < 8) {
-                    System.out.println("Pkt too short");
+                    System.out.println(" ===== Pkt too short");
                     continue;
                 }
 
@@ -47,15 +46,12 @@ public class FileReceiver {
 
                 // Send Acknowledgement
                 if (crc.getValue() != chksum) {
-                    System.out.println("Pkt corrupt");
+                    System.out.println(" ===== Pkt corrupt -- " + packetIndex);
+                    sendACK(receivedPacket, sk, pkt.getSocketAddress());
                 } else {
-                    System.out.println("Pkt " + packetIndex);
-
-                    byte[] ack = new byte[4];
-                    ByteBuffer ackBuffer = ByteBuffer.wrap(ack);
-                    ackBuffer.putInt(packetIndex);
-                    DatagramPacket ackPacket = new DatagramPacket(ack, 0, 4, pkt.getSocketAddress());
-                    sk.send(ackPacket);
+                    System.out.println("===== SUCCESS! Pkt received -- " + packetIndex);
+                    sendACK(packetIndex, sk, pkt.getSocketAddress());
+                    receivedPacket = packetIndex;
                 }
             }
 
@@ -66,5 +62,28 @@ public class FileReceiver {
             System.out.println(e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private static void sendACK(int packetIndex, DatagramSocket sk, SocketAddress address) throws IOException {
+        CRC32 crc = new CRC32();
+
+        byte[] ack = new byte[12];
+        ByteBuffer ackBuffer = ByteBuffer.wrap(ack);
+        ackBuffer.clear();
+
+        // Reserve space for checksum
+        ackBuffer.putLong(0);
+        ackBuffer.putInt(packetIndex);
+
+        // Calculate checksum
+        crc.reset();
+        crc.update(ack, 8, 4);
+        long ackCheckSum = crc.getValue();
+
+        ackBuffer.rewind();
+        ackBuffer.putLong(ackCheckSum);
+
+        DatagramPacket ackPacket = new DatagramPacket(ack, 0, 12, address);
+        sk.send(ackPacket);
     }
 }

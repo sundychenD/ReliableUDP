@@ -3,11 +3,12 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32;
 
 public class FileSender {
 
-    public void main(String[] args) {
+    public static void main(String[] args) {
 
         if (args.length != 4) {
             System.err.println("Usage: FileSender <host_name>, <port_number>, <source_file>, <destination_file_name>");
@@ -27,6 +28,7 @@ public class FileSender {
 
 class FileSenderEngine {
     private final int PACKET_CONTENT_LEN = 512;
+    private final int ACK_LEN = 12;
     private final int HEADER_LEN = 12;
     private final int WINDOW_LEN = 5;
 
@@ -83,13 +85,16 @@ class FileSenderEngine {
         CRC32 crc = new CRC32();
         byte[] packetBuffer = new byte[this.HEADER_LEN + this.PACKET_CONTENT_LEN];
 
-        int packetIndex = 0;
-        while (packetIndex < numPacket) {
+        int packetIndex = 1;
+        while (packetIndex <= numPacket) {
+            System.out.println("===== Sender processing packet -- " + packetIndex);
             pkt = formContentPacket(packetIndex, crc, packetBuffer);
 
             // Keep sending until receive ack
             this.UDPSocket.send(pkt);
+            System.out.println(" ===== Packet Send -- " + packetIndex);
             while (notReceiveAck(packetIndex)) {
+                System.out.println(" ===== No ACT, Packet resend -- " + packetIndex);
                 this.UDPSocket.send(pkt);
             }
 
@@ -106,16 +111,49 @@ class FileSenderEngine {
     *   - checksum not match, packet corrupted
     *   - incorrect packet index
     * */
-    private boolean notReceiveAck(int packetIndex) {
-        if (timeout) {
-            return true;
-        } else if (checksum not_match) {
-            return true;
-        } else if (packetIndex not match) {
-            return true;
-        } else {
-            return false;
+    private boolean notReceiveAck(int packetIndex) throws IOException {
+
+        byte[] ackByteBuffer = new byte[this.ACK_LEN];
+        DatagramPacket pkt = new DatagramPacket(ackByteBuffer, ackByteBuffer.length);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(ackByteBuffer);
+        CRC32 crc = new CRC32();
+
+        long stopTime = System.currentTimeMillis()+ TimeUnit.SECONDS.toMillis(200);
+
+        while (System.currentTimeMillis() < stopTime) {
+            System.out.println(" * Ack not time out -- " + packetIndex);
+            pkt.setLength(ackByteBuffer.length);
+            this.UDPSocket.receive(pkt);
+            if (pkt.getLength() < 8) {
+                System.out.println(" ===== ACK too short");
+                continue;
+            }
+
+            byteBuffer.rewind();
+            long chksum = byteBuffer.getLong();
+            int ackIndex = byteBuffer.getInt();
+            crc.reset();
+            crc.update(ackByteBuffer, 8, pkt.getLength() - 8);
+
+            // Debug output
+            // System.out.println("Received CRC:" + crc.getValue() + " Data:" + bytesToHex(data, pkt.getLength()));
+
+            if (crc.getValue() == chksum) {
+                if (ackIndex == packetIndex) {
+                    System.out.println("===== ACK received -- " + ackIndex);
+                    return false;
+                } else {
+                    System.out.println(" ===== ACK order wrong -- " + ackIndex + " expected -- " + packetIndex);
+                    return true;
+                }
+            } else {
+                System.out.println(" ===== ACK corrupted -- " + ackIndex);
+                return true;
+            }
         }
+
+        System.out.println(" ===== Timeout 200 ms, no ACK -- " + packetIndex);
+        return true;
     }
 
     /*
