@@ -2,6 +2,7 @@ import java.io.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32;
@@ -57,11 +58,13 @@ class FileSenderEngine {
         try {
             this.address = new InetSocketAddress(this.hostName, this.portNumber);
             this.UDPSocket = new DatagramSocket();
+            this.UDPSocket.setSoTimeout(2);
             this.file = new File(this.sourceFile);
             this.sourceFileStream = new FileInputStream(this.file);
 
             long len = this.file.length();
             int numPacket = (int) Math.ceil((double) len / this.PACKET_CONTENT_LEN);
+            System.out.println("**** File length " + len + "   Total " + numPacket + " to send");
 
             // Plain Send
             plainSend(numPacket);
@@ -118,12 +121,17 @@ class FileSenderEngine {
         ByteBuffer byteBuffer = ByteBuffer.wrap(ackByteBuffer);
         CRC32 crc = new CRC32();
 
-        long stopTime = System.currentTimeMillis()+ TimeUnit.SECONDS.toMillis(200);
-
-        while (System.currentTimeMillis() < stopTime) {
+        while (true) {
             System.out.println(" * Ack not time out -- " + packetIndex);
             pkt.setLength(ackByteBuffer.length);
-            this.UDPSocket.receive(pkt);
+
+            try {
+                this.UDPSocket.receive(pkt);
+            } catch (SocketTimeoutException e) {
+                System.out.println(" ===== Timeout 2 ms, no ACK -- " + packetIndex);
+                return true;
+            }
+
             if (pkt.getLength() < 8) {
                 System.out.println(" ===== ACK too short");
                 continue;
@@ -151,9 +159,6 @@ class FileSenderEngine {
                 return true;
             }
         }
-
-        System.out.println(" ===== Timeout 200 ms, no ACK -- " + packetIndex);
-        return true;
     }
 
     /*

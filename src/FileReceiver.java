@@ -1,4 +1,4 @@
-import java.io.IOException;
+import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
@@ -18,16 +18,27 @@ public class FileReceiver {
 
         int port = Integer.parseInt(args[0]);
 
+
+
         try {
-            byte[] data = new byte[PACKET_LEN];
-            ByteBuffer byteBuffer = ByteBuffer.wrap(data);
+            // Output file
+            File file = new File("test2.jpg");
+            OutputStream outputStream = new FileOutputStream(file);
+
+            byte[] data;
+            ByteBuffer byteBuffer;
             CRC32 crc = new CRC32();
 
             DatagramSocket sk = new DatagramSocket(port);
-            DatagramPacket pkt = new DatagramPacket(data, data.length);
+            DatagramPacket pkt;
 
             int receivedPacket = 0;
-            while (true) {
+            while (receivedPacket <= 6091) {
+
+                data = new byte[PACKET_LEN];
+                byteBuffer = ByteBuffer.wrap(data);
+                pkt = new DatagramPacket(data, data.length);
+
                 pkt.setLength(data.length);
                 sk.receive(pkt);
                 if (pkt.getLength() < 8) {
@@ -51,9 +62,17 @@ public class FileReceiver {
                 } else {
                     System.out.println("===== SUCCESS! Pkt received -- " + packetIndex);
                     sendACK(packetIndex, sk, pkt.getSocketAddress());
+
+                    if (packetIndex != receivedPacket) {
+                        long byteswrite = pkt.getLength() - 12;
+                        System.out.println("===== Write " + byteswrite + "bytes");
+                        outputStream.write(data, 12, pkt.getLength() - 12);
+                    }
                     receivedPacket = packetIndex;
                 }
             }
+            // Close output file
+            outputStream.close();
 
         } catch (SocketException e) {
             System.out.println(e.getMessage());
