@@ -7,10 +7,7 @@ import java.util.zip.CRC32;
 
 public class FileSender {
 
-    private static final int PACKET_CONTENT_LEN = 512;
-    private static final int HEADER_LEN = 12;
-
-    public static void main(String[] args) {
+    public void main(String[] args) {
 
         if (args.length != 4) {
             System.err.println("Usage: FileSender <host_name>, <port_number>, <source_file>, <destination_file_name>");
@@ -22,17 +19,55 @@ public class FileSender {
         String sourceFile = args[2];
         String destinationFileName = args[3];
 
+        FileSenderEngine sender = new FileSenderEngine(hostName, portNumber, sourceFile, destinationFileName);
+        sender.run();
+
+    }
+}
+
+class FileSenderEngine {
+    private final int PACKET_CONTENT_LEN = 512;
+    private final int HEADER_LEN = 12;
+    private final int WINDOW_LEN = 5;
+
+    private final String hostName;
+    private final int portNumber;
+    private final String sourceFile;
+    private final String destinationFileName;
+
+    private InetSocketAddress address;
+    private DatagramSocket UDPSocket;
+    private File file;
+    private InputStream sourceFileStream;
+
+    public FileSenderEngine(String host_name,
+                            int port_number,
+                            String source_file,
+                            String destination_file_name) {
+        this.hostName = host_name;
+        this.portNumber = port_number;
+        this.sourceFile = source_file;
+        this.destinationFileName = destination_file_name;
+    }
+
+    public void run() {
+
         try {
-            InetSocketAddress address = new InetSocketAddress(hostName, portNumber);
-            DatagramSocket UDPSocket = new DatagramSocket();
-            InputStream sourceFileStream = getInputFile(sourceFile);
+            this.address = new InetSocketAddress(this.hostName, this.portNumber);
+            this.UDPSocket = new DatagramSocket();
+            this.file = new File(this.sourceFile);
+            this.sourceFileStream = new FileInputStream(this.file);
+
+            long len = this.file.length();
+            int numPacket = (int) Math.ceil((double) len / this.PACKET_CONTENT_LEN);
 
             // Plain Send
-            plainSend(sourceFileStream, address, UDPSocket);
+            plainSend(numPacket);
 
             // Close I/O Channel
-            sourceFileStream.close();
-            UDPSocket.close();
+            this.sourceFileStream.close();
+            this.UDPSocket.close();
+
         } catch (IOException e) {
             System.out.println(e.getMessage());
             e.printStackTrace();
@@ -43,54 +78,75 @@ public class FileSender {
     * Plain Send through UDP
     * Data Packet would be [checkSum 8 bytes, index 4 bytes, content up to 512 bytes]
     * */
-    private static void plainSend(InputStream sourceFileStream,
-                                  InetSocketAddress address,
-                                  DatagramSocket socket) throws IOException {
-
+    private void plainSend(int numPacket) throws IOException {
         DatagramPacket pkt;
-        ByteBuffer b;
         CRC32 crc = new CRC32();
-        byte[] packetBuffer = new byte[HEADER_LEN + PACKET_CONTENT_LEN];
+        byte[] packetBuffer = new byte[this.HEADER_LEN + this.PACKET_CONTENT_LEN];
 
-        // Read From Source File
-        int contentLen;
         int packetIndex = 0;
-        while ((contentLen = sourceFileStream.read(packetBuffer, HEADER_LEN, PACKET_CONTENT_LEN)) != -1) {
-            b = ByteBuffer.wrap(packetBuffer);
+        while (packetIndex < numPacket) {
+            pkt = formContentPacket(packetIndex, crc, packetBuffer);
 
-            b.clear();
-            // Reserve space for checksum
-            b.putLong(0);
-            b.putInt(packetIndex);
+            // Keep sending until receive ack
+            this.UDPSocket.send(pkt);
+            while (notReceiveAck(packetIndex)) {
+                this.UDPSocket.send(pkt);
+            }
 
-            // Calculate checksum
-            crc.reset();
-            crc.update(packetBuffer, 8, contentLen);
-            long chksum = crc.getValue();
-
-            b.rewind();
-            b.putLong(chksum);
-
-            // Form data packet and send
-            pkt = new DatagramPacket(packetBuffer, HEADER_LEN + contentLen, address);
-            socket.send(pkt);
-
-            // Update packet index value
+            // Update next packet index
             packetIndex++;
         }
     }
 
     /*
-    * Read Input File into stream
+    * Judge if receive valid acknowledge from receiver
+    *
+    * 3 Cases considered as invalid
+    *   - timeout
+    *   - checksum not match, packet corrupted
+    *   - incorrect packet index
     * */
-    private static InputStream getInputFile(String sourceFile) throws FileNotFoundException {
-        File file = new File(sourceFile);
-        InputStream srcFileStream = new FileInputStream(file);
-        return srcFileStream;
+    private boolean notReceiveAck(int packetIndex) {
+        if (timeout) {
+            return true;
+        } else if (checksum not_match) {
+            return true;
+        } else if (packetIndex not match) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
-    final protected static char[] hexArray = "0123456789ABCDEF".toCharArray();
-    public static String bytesToHex(byte[] bytes) {
+    /*
+    * Form datagram packet
+    * */
+    private DatagramPacket formContentPacket(int packetIndex,
+                                             CRC32 crc,
+                                             byte[] packetBuffer) throws IOException {
+        // Read From Source File
+        int contentLen;
+        contentLen = this.sourceFileStream.read(packetBuffer, this.HEADER_LEN, this.PACKET_CONTENT_LEN);
+        ByteBuffer b = ByteBuffer.wrap(packetBuffer);
+        b.clear();
+
+        // Reserve space for checksum
+        b.putLong(0);
+        b.putInt(packetIndex);
+
+        // Calculate checksum
+        crc.reset();
+        crc.update(packetBuffer, 8, 4 + contentLen);
+        long chksum = crc.getValue();
+
+        b.rewind();
+        b.putLong(chksum);
+
+        return new DatagramPacket(packetBuffer, this.HEADER_LEN + contentLen, address);
+    }
+
+    final protected char[] hexArray = "0123456789ABCDEF".toCharArray();
+    private String bytesToHex(byte[] bytes) {
         char[] hexChars = new char[bytes.length * 2];
         for ( int j = 0; j < bytes.length; j++ ) {
             int v = bytes[j] & 0xFF;
@@ -99,4 +155,5 @@ public class FileSender {
         }
         return new String(hexChars);
     }
+
 }
