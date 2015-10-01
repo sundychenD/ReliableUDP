@@ -1,5 +1,5 @@
 # ReliableUDP
-=================
+--------------
 
 RelaibleUDP is designed to provide a reliable file transferring channel that is established on UDP.
 
