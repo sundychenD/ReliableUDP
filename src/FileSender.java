@@ -1,10 +1,11 @@
+import javafx.util.Pair;
+
 import java.io.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.TimeUnit;
 import java.util.zip.CRC32;
 
 public class FileSender {
@@ -31,7 +32,6 @@ class FileSenderEngine {
     private final int PACKET_CONTENT_LEN = 512;
     private final int ACK_LEN = 12;
     private final int HEADER_LEN = 12;
-    private final int WINDOW_LEN = 5;
 
     private final String hostName;
     private final int portNumber;
@@ -88,6 +88,11 @@ class FileSenderEngine {
         CRC32 crc = new CRC32();
         byte[] packetBuffer = new byte[this.HEADER_LEN + this.PACKET_CONTENT_LEN];
 
+        pkt = formMetaDataPacket(this.destinationFileName, numPacket);
+        while (notReceiveAck(-1)) {
+            this.UDPSocket.send(pkt);
+        }
+
         int packetIndex = 1;
         while (packetIndex <= numPacket) {
             System.out.println("===== Sender processing packet -- " + packetIndex);
@@ -122,7 +127,6 @@ class FileSenderEngine {
         CRC32 crc = new CRC32();
 
         while (true) {
-            System.out.println(" * Ack not time out -- " + packetIndex);
             pkt.setLength(ackByteBuffer.length);
 
             try {
@@ -159,6 +163,44 @@ class FileSenderEngine {
                 return true;
             }
         }
+    }
+
+    /*
+    * Form meta data packet
+    * */
+    private DatagramPacket formMetaDataPacket(String fileName, int numPacket) {
+        int fileNameByteLength = fileName.length() * 2;
+        int fileNameNumOfChar = fileName.length();
+
+        byte[] packetBuffer = new byte[16 + fileNameByteLength];
+        System.out.println("destination file name: " + fileName);
+        System.out.println("fileNameByteLength: " + fileNameByteLength);
+
+        // Read From Source File
+        ByteBuffer b = ByteBuffer.wrap(packetBuffer);
+        b.clear();
+
+        // Reserve space for checksum
+        b.putLong(0);
+        b.putInt(-1);
+        b.putInt(numPacket);
+
+        // Put file name
+        for (int i = 0; i < fileNameNumOfChar; i++) {
+            System.out.println("Current putting char at " + i + " " + fileName.charAt(i));
+            b.putChar(fileName.charAt(i));
+        }
+
+        // Calculate checksum
+        CRC32 crc = new CRC32();
+        crc.reset();
+        crc.update(packetBuffer, 8, 8 + fileNameByteLength);
+        long chksum = crc.getValue();
+
+        b.rewind();
+        b.putLong(chksum);
+
+        return new DatagramPacket(packetBuffer, 16 + fileNameByteLength, this.address);
     }
 
     /*
