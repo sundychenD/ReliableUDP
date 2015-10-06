@@ -1,6 +1,9 @@
+import javafx.util.Pair;
+
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
 import java.util.zip.CRC32;
 
 /**
@@ -44,13 +47,28 @@ public class FileReceiver {
 
 class FileReceiverEngine {
 
-    DatagramSocket socket;
+    private final DatagramSocket socket;
+    private final int PKT_CORRUPTED_ACK = -2;
 
     public FileReceiverEngine(DatagramSocket sk) {
         this.socket = sk;
     }
 
     public void run() throws IOException {
+        // Get file meta data
+        Pair<Integer, String> fileMetaData = receiveFileMetaData();
+        String fileName = fileMetaData.getValue();
+        int numOfPackets = fileMetaData.getKey();
+
+        // Receive file
+        // continueReceiveFile(fileName, numOfPackets);
+        receiveFile(fileName, numOfPackets);
+    }
+
+    /*
+    * Get File meta data
+    * */
+    private Pair<Integer, String> receiveFileMetaData() throws IOException {
         String fileName = null;
         int numOfPackets = 0;
         while (true) {
@@ -72,12 +90,118 @@ class FileReceiverEngine {
                 }
             } else {
                 // Meta packet corrupted
-                sendACK(-2, filePacket.getSocketAddress());
+                sendACK(this.PKT_CORRUPTED_ACK, filePacket.getSocketAddress());
             }
         }
-        continueReceiveFile(fileName, numOfPackets);
+        return new Pair<Integer, String> (numOfPackets, fileName);
     }
 
+    private void receiveFile(String fileName, int totalNumPacket) throws IOException{
+        // Output file
+        File file = new File(fileName);
+        OutputStream outputStream = new FileOutputStream(file);
+        FilePacket filePacket = new FilePacket(this.socket);;
+
+        int[] receivedPacketList = new int[totalNumPacket];
+        LinkedList<FilePacket> packetBuffer = new LinkedList<FilePacket>();
+        int receivedPacketTill = 0;
+        int packetIndex = 0;
+        while (true) {
+
+            // Receive packet from socket
+            filePacket.receivePkt();
+
+            if (filePacket.pkt.getLength() < 8) {
+                System.out.println(" ===== Pkt too short");
+                continue;
+            }
+            packetIndex = filePacket.getPacketIndex();
+
+            // Debug output
+            // System.out.println("Received CRC:" + crc.getValue() + " Data:" + bytesToHex(data, pkt.getLength()));
+
+            // Send Acknowledgement
+            if (filePacket.isCorrupted()) {
+                System.out.println(" ===== Pkt corrupt -- " + packetIndex);
+                sendACK(this.PKT_CORRUPTED_ACK, filePacket.getSocketAddress());
+            } else {
+                if (packetIndex == receivedPacketTill) {
+                    // Receive in order packet
+                    System.out.println("===== SUCCESS! Pkt received -- " + packetIndex);
+                    sendACK(packetIndex, filePacket.getSocketAddress());
+
+                    receivedPacketList[packetIndex] = 1;
+                    packetBuffer.add(filePacket);
+                    int newlyWritePackets = writeFromBuffer(receivedPacketTill,
+                                                            receivedPacketList,
+                                                            packetBuffer,
+                                                            outputStream);
+                    receivedPacketTill += newlyWritePackets;
+                } else {
+                    // Packet out of order
+                    if (receivedPacketList[packetIndex] == 1) {
+                        // Already received packet
+                        System.out.println(" ===== SUCCESS! Pkt already have, abandon -- " + packetIndex);
+                    } else {
+                        System.out.println(" ===== SUCCESS! Pkt out of order, store in buffer -- " + packetIndex);
+                        receivedPacketList[packetIndex] = 1;
+                        packetBuffer.add(filePacket);
+                    }
+                    sendACK(packetIndex, filePacket.getSocketAddress());
+                }
+            }
+
+            // Close if received full length of packet
+            if (receivedPacketTill == totalNumPacket) {
+                System.out.println(" ===== Close output file " + fileName);
+                outputStream.close();
+            }
+        }
+    }
+
+    /*
+    * Pop packet from buffer and write to disc.
+    * */
+    private int writeFromBuffer (int receivedPacketTill,
+                                 int[] receivedPacketList,
+                                 LinkedList<FilePacket> packetBuffer,
+                                 OutputStream outputStream) throws IOException {
+        int totalPktWriteToDisc = 0;
+        int curPacketIndex = receivedPacketTill;
+
+        // Search through the buffer
+        while (curPacketIndex < receivedPacketList.length && receivedPacketList[curPacketIndex] == 1) {
+            FilePacket filePacket = popPktFromBuffer(packetBuffer, curPacketIndex);
+            long bytesWrite = filePacket.getDataLength() - 12;
+            System.out.println("===== Write " + bytesWrite + "bytes, packet index: " + filePacket.getPacketIndex() + " buffered index: " + curPacketIndex);
+
+            outputStream.write(filePacket.data, 12, filePacket.getDataLength() - 12);
+            totalPktWriteToDisc += 1;
+            curPacketIndex += 1;
+        }
+        return totalPktWriteToDisc;
+    }
+
+    /*
+    * Find the packet with corresponding index from buffer
+    * */
+    private FilePacket popPktFromBuffer(LinkedList<FilePacket> packetBuffer, int index) {
+        FilePacket curPacket = null;
+        for (int i = 0; i < packetBuffer.size(); i++) {
+            curPacket = packetBuffer.get(i);
+            System.out.println("buffer cur index is -- " + curPacket.getPacketIndex() + "  required index is -- " + index);
+            if (curPacket.getPacketIndex() == index) {
+                packetBuffer.remove(i);
+                System.out.println("===== Pop packet from buffer at index -- " + i + " packet index -- " + curPacket.getPacketIndex());
+                break;
+            }
+        }
+        return curPacket;
+    }
+
+    /*
+    * Linear receive file
+    * */
     private void continueReceiveFile(String fileName, int numPacket) {
         try {
             // Output file

@@ -6,6 +6,7 @@ import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
 import java.util.zip.CRC32;
 
 public class FileSender {
@@ -32,6 +33,8 @@ class FileSenderEngine {
     private final int PACKET_CONTENT_LEN = 512;
     private final int ACK_LEN = 12;
     private final int HEADER_LEN = 12;
+    private final int WINDOW_SIZE = 13;
+    private final int NO_ACK = -13;
 
     private final String hostName;
     private final int portNumber;
@@ -67,7 +70,8 @@ class FileSenderEngine {
             System.out.println("**** File length " + len + "   Total " + numPacket + " to send");
 
             // Plain Send
-            plainSend(numPacket);
+            //plainSend(numPacket);
+            pipelineSend(numPacket);
 
             // Close I/O Channel
             this.sourceFileStream.close();
@@ -85,18 +89,17 @@ class FileSenderEngine {
     * */
     private void plainSend(int numPacket) throws IOException {
         DatagramPacket pkt;
-        CRC32 crc = new CRC32();
-        byte[] packetBuffer = new byte[this.HEADER_LEN + this.PACKET_CONTENT_LEN];
 
+        // Send Meta Data
         pkt = formMetaDataPacket(this.destinationFileName, numPacket);
         while (notReceiveAck(-1)) {
             this.UDPSocket.send(pkt);
         }
 
-        int packetIndex = 1;
-        while (packetIndex <= numPacket) {
+        int packetIndex = 0;
+        while (packetIndex < numPacket) {
             System.out.println("===== Sender processing packet -- " + packetIndex);
-            pkt = formContentPacket(packetIndex, crc, packetBuffer);
+            pkt = formContentPacket(packetIndex);
 
             // Keep sending until receive ack
             this.UDPSocket.send(pkt);
@@ -110,6 +113,134 @@ class FileSenderEngine {
             packetIndex++;
         }
     }
+
+    /*
+    * Pipeline Send, Selective Send
+    * */
+    private void pipelineSend(int numPacket) throws IOException {
+        // Send Meta Data
+        DatagramPacket pkt = formMetaDataPacket(this.destinationFileName, numPacket);
+        while (notReceiveAck(-1)) {
+            this.UDPSocket.send(pkt);
+        }
+
+        int[] receivedACKList = new int[numPacket]; // Start from 0
+        int curReceivedTill = 0;            // Exclusive till index
+        int curSendSize = 0;
+
+        while (curReceivedTill < numPacket) {
+            // Calculate current send buffer size
+            if (curReceivedTill <= numPacket - this.WINDOW_SIZE) {
+                curSendSize = this.WINDOW_SIZE;
+            } else {
+                curSendSize = numPacket - curReceivedTill;
+            }
+
+            sendByBuffer(receivedACKList, curSendSize, curReceivedTill);
+            curReceivedTill += curSendSize;
+        }
+    }
+
+    /*
+    * Send packet in one buffer
+    * */
+    private void sendByBuffer(int[] receivedACKList, int curSendSize, int curReceivedTill) throws IOException {
+        // Read data into buffer
+        // Assume window size bigger than num of packet
+        LinkedList <DatagramPacket> packetBuffer = new LinkedList<DatagramPacket>();
+        for (int i = 0; i < curSendSize; i++) {
+            System.out.println("===== Prepare package -- " + (curReceivedTill + i));
+            DatagramPacket curPacket = formContentPacket(curReceivedTill + i);
+            packetBuffer.add(curPacket);
+        }
+
+        while (!bufferAllReceiveAck(curReceivedTill, curSendSize, receivedACKList)) {
+            sendBufferPacket(receivedACKList, curSendSize, curReceivedTill, packetBuffer);
+
+            // Check ACK
+            long start = System.currentTimeMillis();
+            while (System.currentTimeMillis() < start + 13l) {
+                int ACKNum;
+                if ((ACKNum = receivedACK()) != this.NO_ACK) {
+                    receivedACKList[ACKNum] = 1;
+                }
+            }
+        }
+    }
+
+    /*
+    * Send packets in a buffer that has not yet received ACK
+    * */
+    private void sendBufferPacket(int[] receivedACKList,
+                                  int curSendSize,
+                                  int curReceivedTill,
+                                  LinkedList <DatagramPacket> packetBuffer) throws IOException{
+        // Send packet from buffer
+        for (int i = 0; i < curSendSize; i++) {
+            if (receivedACKList[curReceivedTill + i] == 0) {
+                this.UDPSocket.send(packetBuffer.get(i));
+            }
+        }
+    }
+
+    /*
+    * Check if all buffered packet ack received
+    * */
+    private boolean bufferAllReceiveAck(int startIndex, int curSendSize, int[] receivedACKList) {
+        for (int i = 0; i < curSendSize; i++) {
+            if (receivedACKList[startIndex + i] == 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /*
+    * Return received ACK number
+    * */
+    private int receivedACK() throws IOException {
+        byte[] ackByteBuffer = new byte[this.ACK_LEN];
+        DatagramPacket pkt = new DatagramPacket(ackByteBuffer, ackByteBuffer.length);
+        ByteBuffer byteBuffer = ByteBuffer.wrap(ackByteBuffer);
+        CRC32 crc = new CRC32();
+
+        while (true) {
+            pkt.setLength(ackByteBuffer.length);
+
+            try {
+                this.UDPSocket.receive(pkt);
+            } catch (SocketTimeoutException e) {
+                System.out.println(" ===== Timeout 2 ms, no ACK -- ");
+                return NO_ACK;
+            }
+
+            if (pkt.getLength() < 8) {
+                System.out.println(" ===== ACK too short");
+                continue;
+            }
+
+            byteBuffer.rewind();
+            long chksum = byteBuffer.getLong();
+            int ackIndex = byteBuffer.getInt();
+            crc.reset();
+            crc.update(ackByteBuffer, 8, pkt.getLength() - 8);
+
+            // Debug output
+            // System.out.println("Received CRC:" + crc.getValue() + " Data:" + bytesToHex(data, pkt.getLength()));
+
+            if (crc.getValue() == chksum) {
+                if (ackIndex < 0) {
+                    return NO_ACK;
+                } else {
+                    return ackIndex;
+                }
+            } else {
+                System.out.println(" ===== ACK corrupted -- " + ackIndex);
+                return NO_ACK;
+            }
+        }
+    }
+
 
     /*
     * Judge if receive valid acknowledge from receiver
@@ -206,10 +337,11 @@ class FileSenderEngine {
     /*
     * Form datagram packet
     * */
-    private DatagramPacket formContentPacket(int packetIndex,
-                                             CRC32 crc,
-                                             byte[] packetBuffer) throws IOException {
+    private DatagramPacket formContentPacket(int packetIndex) throws IOException {
         // Read From Source File
+        CRC32 crc = new CRC32();
+        byte[] packetBuffer = new byte[this.HEADER_LEN + this.PACKET_CONTENT_LEN];
+
         int contentLen;
         contentLen = this.sourceFileStream.read(packetBuffer, this.HEADER_LEN, this.PACKET_CONTENT_LEN);
         ByteBuffer b = ByteBuffer.wrap(packetBuffer);
