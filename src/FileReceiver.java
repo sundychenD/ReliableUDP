@@ -100,7 +100,6 @@ class FileReceiverEngine {
         // Output file
         File file = new File(fileName);
         OutputStream outputStream = new FileOutputStream(file);
-        FilePacket filePacket = new FilePacket(this.socket);;
 
         int[] receivedPacketList = new int[totalNumPacket];
         LinkedList<FilePacket> packetBuffer = new LinkedList<FilePacket>();
@@ -109,6 +108,7 @@ class FileReceiverEngine {
         while (true) {
 
             // Receive packet from socket
+            FilePacket filePacket = new FilePacket(this.socket);
             filePacket.receivePkt();
 
             if (filePacket.pkt.getLength() < 8) {
@@ -122,30 +122,34 @@ class FileReceiverEngine {
 
             // Send Acknowledgement
             if (filePacket.isCorrupted()) {
-                System.out.println(" ===== Pkt corrupt -- " + packetIndex);
+                //System.out.println(" ===== Pkt corrupt -- " + packetIndex);
                 sendACK(this.PKT_CORRUPTED_ACK, filePacket.getSocketAddress());
             } else {
                 if (packetIndex == receivedPacketTill) {
                     // Receive in order packet
-                    System.out.println("===== SUCCESS! Pkt received -- " + packetIndex);
+                    //System.out.println("===== SUCCESS! Pkt received -- " + packetIndex);
                     sendACK(packetIndex, filePacket.getSocketAddress());
 
                     receivedPacketList[packetIndex] = 1;
                     packetBuffer.add(filePacket);
+                    //System.out.println("Add packet to buffer -- " + filePacket.getPacketIndex());
                     int newlyWritePackets = writeFromBuffer(receivedPacketTill,
                                                             receivedPacketList,
                                                             packetBuffer,
                                                             outputStream);
+                    //printPacketBuffer(packetBuffer);
                     receivedPacketTill += newlyWritePackets;
                 } else {
                     // Packet out of order
                     if (receivedPacketList[packetIndex] == 1) {
                         // Already received packet
-                        System.out.println(" ===== SUCCESS! Pkt already have, abandon -- " + packetIndex);
+                        //System.out.println(" ===== SUCCESS! Pkt already have, abandon -- " + packetIndex);
                     } else {
-                        System.out.println(" ===== SUCCESS! Pkt out of order, store in buffer -- " + packetIndex);
+                        //System.out.println(" ===== SUCCESS! Pkt out of order, store in buffer -- " + packetIndex);
                         receivedPacketList[packetIndex] = 1;
                         packetBuffer.add(filePacket);
+                        //System.out.println("Add packet to buffer -- " + filePacket.getPacketIndex());
+                        //printPacketBuffer(packetBuffer);
                     }
                     sendACK(packetIndex, filePacket.getSocketAddress());
                 }
@@ -153,7 +157,7 @@ class FileReceiverEngine {
 
             // Close if received full length of packet
             if (receivedPacketTill == totalNumPacket) {
-                System.out.println(" ===== Close output file " + fileName);
+                //System.out.println(" ===== Close output file " + fileName);
                 outputStream.close();
             }
         }
@@ -173,13 +177,24 @@ class FileReceiverEngine {
         while (curPacketIndex < receivedPacketList.length && receivedPacketList[curPacketIndex] == 1) {
             FilePacket filePacket = popPktFromBuffer(packetBuffer, curPacketIndex);
             long bytesWrite = filePacket.getDataLength() - 12;
-            System.out.println("===== Write " + bytesWrite + "bytes, packet index: " + filePacket.getPacketIndex() + " buffered index: " + curPacketIndex);
+            //System.out.println("===== Write " + bytesWrite + "bytes, packet index: " + filePacket.getPacketIndex() + " buffered index: " + curPacketIndex);
 
             outputStream.write(filePacket.data, 12, filePacket.getDataLength() - 12);
             totalPktWriteToDisc += 1;
             curPacketIndex += 1;
         }
+        //printPacketBuffer(packetBuffer);
         return totalPktWriteToDisc;
+    }
+
+    private void printPacketBuffer(LinkedList<FilePacket> packetBuffer) {
+        System.out.println("*******************");
+        FilePacket curPacket = null;
+        for (int i = 0; i < packetBuffer.size(); i++) {
+            curPacket = packetBuffer.get(i);
+            System.out.println("* i -- " + i + " packet index -- " + curPacket.getPacketIndex());
+        }
+        System.out.println("*******************");
     }
 
     /*
@@ -189,14 +204,14 @@ class FileReceiverEngine {
         FilePacket curPacket = null;
         for (int i = 0; i < packetBuffer.size(); i++) {
             curPacket = packetBuffer.get(i);
-            System.out.println("buffer cur index is -- " + curPacket.getPacketIndex() + "  required index is -- " + index);
+            //System.out.println("buffer cur index is -- " + curPacket.getPacketIndex() + "  required index is -- " + index + " -- i " + i);
             if (curPacket.getPacketIndex() == index) {
                 packetBuffer.remove(i);
-                System.out.println("===== Pop packet from buffer at index -- " + i + " packet index -- " + curPacket.getPacketIndex());
-                break;
+                //System.out.println("===== Pop packet from buffer at index -- " + i + " packet index -- " + curPacket.getPacketIndex());
+                return curPacket;
             }
         }
-        return curPacket;
+        return null;
     }
 
     /*

@@ -33,7 +33,7 @@ class FileSenderEngine {
     private final int PACKET_CONTENT_LEN = 512;
     private final int ACK_LEN = 12;
     private final int HEADER_LEN = 12;
-    private final int WINDOW_SIZE = 13;
+    private final int WINDOW_SIZE = 1024;
     private final int NO_ACK = -13;
 
     private final String hostName;
@@ -67,7 +67,7 @@ class FileSenderEngine {
 
             long len = this.file.length();
             int numPacket = (int) Math.ceil((double) len / this.PACKET_CONTENT_LEN);
-            System.out.println("**** File length " + len + "   Total " + numPacket + " to send");
+            //System.out.println("**** File length " + len + "   Total " + numPacket + " to send");
 
             // Plain Send
             //plainSend(numPacket);
@@ -98,14 +98,14 @@ class FileSenderEngine {
 
         int packetIndex = 0;
         while (packetIndex < numPacket) {
-            System.out.println("===== Sender processing packet -- " + packetIndex);
+            //System.out.println("===== Sender processing packet -- " + packetIndex);
             pkt = formContentPacket(packetIndex);
 
             // Keep sending until receive ack
             this.UDPSocket.send(pkt);
-            System.out.println(" ===== Packet Send -- " + packetIndex);
+            //System.out.println(" ===== Packet Send -- " + packetIndex);
             while (notReceiveAck(packetIndex)) {
-                System.out.println(" ===== No ACT, Packet resend -- " + packetIndex);
+                //System.out.println(" ===== No ACT, Packet resend -- " + packetIndex);
                 this.UDPSocket.send(pkt);
             }
 
@@ -149,7 +149,7 @@ class FileSenderEngine {
         // Assume window size bigger than num of packet
         LinkedList <DatagramPacket> packetBuffer = new LinkedList<DatagramPacket>();
         for (int i = 0; i < curSendSize; i++) {
-            System.out.println("===== Prepare package -- " + (curReceivedTill + i));
+            //System.out.println("===== Prepare package -- " + (curReceivedTill + i));
             DatagramPacket curPacket = formContentPacket(curReceivedTill + i);
             packetBuffer.add(curPacket);
         }
@@ -210,12 +210,12 @@ class FileSenderEngine {
             try {
                 this.UDPSocket.receive(pkt);
             } catch (SocketTimeoutException e) {
-                System.out.println(" ===== Timeout 2 ms, no ACK -- ");
+                //System.out.println(" ===== Timeout 2 ms, no ACK -- ");
                 return NO_ACK;
             }
 
             if (pkt.getLength() < 8) {
-                System.out.println(" ===== ACK too short");
+                //System.out.println(" ===== ACK too short");
                 continue;
             }
 
@@ -235,7 +235,7 @@ class FileSenderEngine {
                     return ackIndex;
                 }
             } else {
-                System.out.println(" ===== ACK corrupted -- " + ackIndex);
+                //System.out.println(" ===== ACK corrupted -- " + ackIndex);
                 return NO_ACK;
             }
         }
@@ -263,12 +263,12 @@ class FileSenderEngine {
             try {
                 this.UDPSocket.receive(pkt);
             } catch (SocketTimeoutException e) {
-                System.out.println(" ===== Timeout 2 ms, no ACK -- " + packetIndex);
+                //System.out.println(" ===== Timeout 2 ms, no ACK -- " + packetIndex);
                 return true;
             }
 
             if (pkt.getLength() < 8) {
-                System.out.println(" ===== ACK too short");
+                //System.out.println(" ===== ACK too short");
                 continue;
             }
 
@@ -283,14 +283,14 @@ class FileSenderEngine {
 
             if (crc.getValue() == chksum) {
                 if (ackIndex == packetIndex) {
-                    System.out.println("===== ACK received -- " + ackIndex);
+                    //System.out.println("===== ACK received -- " + ackIndex);
                     return false;
                 } else {
-                    System.out.println(" ===== ACK order wrong -- " + ackIndex + " expected -- " + packetIndex);
+                    //System.out.println(" ===== ACK order wrong -- " + ackIndex + " expected -- " + packetIndex);
                     return true;
                 }
             } else {
-                System.out.println(" ===== ACK corrupted -- " + ackIndex);
+                //System.out.println(" ===== ACK corrupted -- " + ackIndex);
                 return true;
             }
         }
@@ -304,8 +304,8 @@ class FileSenderEngine {
         int fileNameNumOfChar = fileName.length();
 
         byte[] packetBuffer = new byte[16 + fileNameByteLength];
-        System.out.println("destination file name: " + fileName);
-        System.out.println("fileNameByteLength: " + fileNameByteLength);
+        //System.out.println("destination file name: " + fileName);
+        //System.out.println("fileNameByteLength: " + fileNameByteLength);
 
         // Read From Source File
         ByteBuffer b = ByteBuffer.wrap(packetBuffer);
@@ -318,7 +318,7 @@ class FileSenderEngine {
 
         // Put file name
         for (int i = 0; i < fileNameNumOfChar; i++) {
-            System.out.println("Current putting char at " + i + " " + fileName.charAt(i));
+            //System.out.println("Current putting char at " + i + " " + fileName.charAt(i));
             b.putChar(fileName.charAt(i));
         }
 
