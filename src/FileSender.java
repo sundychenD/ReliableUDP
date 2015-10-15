@@ -1,5 +1,3 @@
-import javafx.util.Pair;
-
 import java.io.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -33,7 +31,7 @@ class FileSenderEngine {
     private final int PACKET_CONTENT_LEN = 512;
     private final int ACK_LEN = 12;
     private final int HEADER_LEN = 12;
-    private final int WINDOW_SIZE = 1024;
+    private final int WINDOW_SIZE = 256;
     private final int NO_ACK = -13;
 
     private final String hostName;
@@ -61,7 +59,7 @@ class FileSenderEngine {
         try {
             this.address = new InetSocketAddress(this.hostName, this.portNumber);
             this.UDPSocket = new DatagramSocket();
-            this.UDPSocket.setSoTimeout(2);
+            this.UDPSocket.setSoTimeout(1);
             this.file = new File(this.sourceFile);
             this.sourceFileStream = new FileInputStream(this.file);
 

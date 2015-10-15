@@ -1,5 +1,3 @@
-import javafx.util.Pair;
-
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -44,7 +42,6 @@ public class FileReceiver {
     }
 }
 
-
 class FileReceiverEngine {
 
     private final DatagramSocket socket;
@@ -56,7 +53,7 @@ class FileReceiverEngine {
 
     public void run() throws IOException {
         // Get file meta data
-        Pair<Integer, String> fileMetaData = receiveFileMetaData();
+        Pair fileMetaData = receiveFileMetaData();
         String fileName = fileMetaData.getValue();
         int numOfPackets = fileMetaData.getKey();
 
@@ -68,7 +65,7 @@ class FileReceiverEngine {
     /*
     * Get File meta data
     * */
-    private Pair<Integer, String> receiveFileMetaData() throws IOException {
+    private Pair receiveFileMetaData() throws IOException {
         String fileName = null;
         int numOfPackets = 0;
         while (true) {
@@ -93,7 +90,7 @@ class FileReceiverEngine {
                 sendACK(this.PKT_CORRUPTED_ACK, filePacket.getSocketAddress());
             }
         }
-        return new Pair<Integer, String> (numOfPackets, fileName);
+        return new Pair (numOfPackets, fileName);
     }
 
     private void receiveFile(String fileName, int totalNumPacket) throws IOException{
@@ -382,5 +379,23 @@ class FilePacket {
             fileName += byteBuffer.getChar();
         }
         return fileName;
+    }
+}
+
+class Pair {
+    private String value;
+    private int key;
+
+    public Pair(int key, String value) {
+        this.value = value;
+        this.key = key;
+    }
+
+    public String getValue() {
+        return this.value;
+    }
+
+    public int getKey() {
+        return this.key;
     }
 }
